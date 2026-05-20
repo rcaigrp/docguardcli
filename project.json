@@ -9,7 +9,7 @@
     "Export findings to JSON."
   ],
   "meeting_budget": 5,
-  "meetings_held": 2,
+  "meetings_held": 3,
   "status": "active",
   "notes": "Redesigned implementation and tests from scratch. Previous approach failed due to truncated paths and incomplete implementation."
 }
