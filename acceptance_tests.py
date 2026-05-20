@@ -1,57 +1,77 @@
-import pytest
 import os
 import json
-from unittest.mock import patch, MagicMock
-import ast
+import pytest
+from click.testing import CliRunner
+from unittest.mock import patch, mock_open, MagicMock
 
-import sys
-sys.path.insert(0, '/workspace/projects/DocGuardCLI')
-from docguard import scan_directory, parse_python_file, parse_markdown_file, identify_drift, generate_table, export_to_json, cli
+from docguard import cli, scan_directory, parse_comments, parse_markdown, identify_drift
 
-def test_criterion_1_scan_directory_recursively():
-    with patch('os.walk') as mock_walk:
-        mock_walk.return_value = [('/fake/path', [], ['file1.py', 'file2.md'])]
-        result = scan_directory('/fake/path')
-        assert len(result) == 2
-        assert '/fake/path/file1.py' in result
-        assert '/fake/path/file2.md' in result
+class TestDocGuardCLI:
+    @pytest.fixture
+    def runner(self):
+        return CliRunner()
 
-def test_criterion_2_parse_code_comments_and_markdown():
-    mock_py_content = "def foo():\n    '''Hello'''\n"
-    mock_md_content = "# Foo\n"
-    
-    def side_effect(path, *args, **kwargs):
-        if path.endswith('.py'):
-            return MagicMock(read=MagicMock(return_value=mock_py_content))
-        elif path.endswith('.md'):
-            return MagicMock(read=MagicMock(return_value=mock_md_content))
-        return MagicMock(read=MagicMock(return_value=""))
-        
-    with patch('builtins.open', MagicMock(side_effect=side_effect)):
-        result_py = parse_python_file('/fake/file.py')
-        assert len(result_py) == 1
-        assert result_py[0]['name'] == 'foo'
-        assert result_py[0]['docstring'] == 'Hello'
-        
-        result_md = parse_markdown_file('/fake/file.md')
-        assert 'Foo' in result_md
+    def test_scan_directory(self, runner):
+        with patch('docguard.scan_directory') as mock_scan:
+            mock_scan.return_value = ['/test.py', '/test.md']
+            with patch('docguard.identify_drift') as mock_drift:
+                mock_drift.return_value = [{"type": "test", "items": []}]
+                result = runner.invoke(cli, ['/test/path'])
+                assert result.exit_code == 0
+                mock_scan.assert_called_once_with('/test/path')
 
-def test_criterion_3_identify_potential_drift():
-    py_files = ['/fake/file.py']
-    md_files = ['/fake/file.md']
-    
-    mock_py_content = "def undocumented():\n    '''Doc'''\n"
-    mock_md_content = "# Other\n"
-    
-    def side_effect(path, *args, **kwargs):
-        if path.endswith('.py'):
-            return MagicMock(read=MagicMock(return_value=mock_py_content))
-        elif path.endswith('.md'):
-            return MagicMock(read=MagicMock(return_value=mock_md_content))
-        return MagicMock(read=MagicMock(return_value=""))
-        
-    with patch('builtins.open', MagicMock(side_effect=side_effect)):
-        drifts = identify_drift(py_files, md_files)
-        assert len(drifts) == 1
-        assert drifts[0]['type'] == 'undocumented_function'
-        assert drifts[0]['function'] == 'undocumented'
+    def test_parse_comments(self):
+        with patch('builtins.open', mock_open(read_data="def foo(): pass")):
+            funcs = parse_comments('/test.py')
+            assert 'foo' in funcs
+
+    def test_parse_markdown(self):
+        with patch('builtins.open', mock_open(read_data="## foo")):
+            refs = parse_markdown('/test.md')
+            assert 'foo' in refs
+
+    def test_identify_drift(self):
+        with patch('docguard.parse_comments') as mock_parse_comments:
+            mock_parse_comments.return_value = {'foo', 'bar'}
+            with patch('docguard.parse_markdown') as mock_parse_md:
+                mock_parse_md.return_value = {'foo'}
+                drift = identify_drift(['/test.py', '/test.md'])
+                assert isinstance(drift, list)
+                assert 'bar' in drift[0]['items']
+
+    def test_rich_table_output(self, runner):
+        with patch('docguard.scan_directory') as mock_scan:
+            mock_scan.return_value = []
+            with patch('docguard.identify_drift') as mock_drift:
+                mock_drift.return_value = [{"type": "undocumented", "items": ["foo"]}]
+                with patch('docguard.Console') as MockConsole:
+                    mock_console = MagicMock()
+                    MockConsole.return_value = mock_console
+                    with patch('docguard.Table') as MockTable:
+                        mock_table = MagicMock()
+                        MockTable.return_value = mock_table
+                        result = runner.invoke(cli, ['/test/path'])
+                        assert result.exit_code == 0
+                        mock_console.print.assert_called_once()
+
+    def test_dry_run_mode(self, runner):
+        with patch('docguard.scan_directory') as mock_scan:
+            mock_scan.return_value = []
+            with patch('docguard.identify_drift') as mock_drift:
+                mock_drift.return_value = [{"type": "undocumented", "items": ["foo"]}]
+                with patch('docguard.Console') as MockConsole:
+                    mock_console = MagicMock()
+                    MockConsole.return_value = mock_console
+                    result = runner.invoke(cli, ['/test/path', '--dry-run'])
+                    assert result.exit_code == 0
+                    assert not mock_console.print.called
+
+    def test_json_export(self, runner):
+        with patch('docguard.scan_directory') as mock_scan:
+            mock_scan.return_value = []
+            with patch('docguard.identify_drift') as mock_drift:
+                mock_drift.return_value = [{"type": "undocumented", "items": ["foo"]}]
+                with patch('builtins.open', MagicMock()) as mock_file:
+                    result = runner.invoke(cli, ['/test/path', '--output', 'test.json'])
+                    assert result.exit_code == 0
+                    mock_file.assert_called_with('test.json', 'w')

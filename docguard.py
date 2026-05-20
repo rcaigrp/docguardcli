@@ -1,96 +1,76 @@
-import click
 import os
-import ast
+import re
 import json
-from pathlib import Path
+import click
 from rich.console import Console
 from rich.table import Table
 
-def scan_directory(directory):
+def scan_directory(path):
     files = []
-    for root, _, filenames in os.walk(directory):
-        for filename in filenames:
-            if filename.endswith('.py') or filename.endswith('.md'):
-                files.append(os.path.join(root, filename))
+    for root, dirs, filenames in os.walk(path):
+        for f in filenames:
+            if f.endswith(('.py', '.md', '.txt')):
+                files.append(os.path.join(root, f))
     return files
 
-def parse_python_file(filepath):
-    with open(filepath, 'r') as f:
-        content = f.read()
-    try:
-        tree = ast.parse(content)
-        functions = []
-        for node in ast.walk(tree):
-            if isinstance(node, ast.FunctionDef):
-                docstring = ast.get_docstring(node)
-                functions.append({'name': node.name, 'docstring': docstring})
-        return functions
-    except SyntaxError:
-        return []
+def parse_comments(filepath):
+    functions = set()
+    if filepath.endswith('.py'):
+        with open(filepath) as f:
+            content = f.read()
+        for match in re.finditer(r'def\s+(\w+)', content):
+            functions.add(match.group(1))
+    return functions
 
-def parse_markdown_file(filepath):
-    with open(filepath, 'r') as f:
+def parse_markdown(filepath):
+    refs = set()
+    with open(filepath) as f:
         content = f.read()
-    headings = [line.lstrip('# ') for line in content.split('\n') if line.startswith('# ')]
-    return headings
+    for match in re.finditer(r'##\s+(\w+)', content):
+        refs.add(match.group(1))
+    return refs
 
-def identify_drift(py_files, md_files):
-    drifts = []
+def identify_drift(files):
+    drift = []
+    py_files = [f for f in files if f.endswith('.py')]
+    md_files = [f for f in files if f.endswith('.md')]
+    
     py_funcs = set()
     for f in py_files:
-        funcs = parse_python_file(f)
-        for func in funcs:
-            if func['name']:
-                py_funcs.add(func['name'])
-    
-    md_sections = set()
+        py_funcs.update(parse_comments(f))
+        
+    md_refs = set()
     for f in md_files:
-        headings = parse_markdown_file(f)
-        md_sections.update(headings)
-    
-    undocumented = py_funcs - md_sections
-    for func_name in undocumented:
-        for f in py_files:
-            funcs = parse_python_file(f)
-            for func in funcs:
-                if func['name'] == func_name:
-                    drifts.append({'type': 'undocumented_function', 'function': func_name, 'file': f})
-                    break
-    return drifts
-
-def generate_table(drifts, dry_run=False):
-    console = Console()
-    table = Table(show_header=True, header_style="bold blue")
-    table.add_column("Type", style="dim")
-    table.add_column("Function/Section", style="cyan")
-    table.add_column("File", style="green")
-    for d in drifts:
-        table.add_row(d['type'], d['function'], d['file'])
-    console.print(table)
-    if dry_run:
-        console.print("[bold yellow]Dry run mode. Changes will not be applied.[/bold yellow]")
-    return drifts
-
-def export_to_json(drifts, output_path):
-    with open(output_path, 'w') as f:
-        json.dump(drifts, f, indent=2)
-    return output_path
+        md_refs.update(parse_markdown(f))
+        
+    undocumented = py_funcs - md_refs
+    drift.append({
+        "type": "undocumented_functions",
+        "items": list(undocumented)
+    })
+    return drift
 
 @click.command()
-@click.argument('directory', type=click.Path(exists=True))
-@click.option('--output', '-o', type=click.Path(allow_dash=True))
-@click.option('--dry-run', is_flag=True)
-def cli(directory, output, dry_run):
-    """DocGuard CLI - Identify documentation drift in Python and Markdown files."""
-    py_files = [f for f in scan_directory(directory) if f.endswith('.py')]
-    md_files = [f for f in scan_directory(directory) if f.endswith('.md')]
+@click.argument('path')
+@click.option('--dry-run', is_flag=True, help='Run without exporting or printing table')
+@click.option('--output', default='docguard.json', help='Output JSON file')
+def cli(path, dry_run, output):
+    console = Console()
+    files = scan_directory(path)
+    drift = identify_drift(files)
     
-    drifts = identify_drift(py_files, md_files)
-    generate_table(drifts, dry_run)
-    
-    if output:
-        export_to_json(drifts, output)
-        click.echo(f"Exported to {output}")
+    if not dry_run:
+        table = Table()
+        table.add_column("Type")
+        table.add_column("Items")
+        for d in drift:
+            table.add_row(d["type"], ", ".join(d["items"]))
+        console.print(table)
+        
+        with open(output, 'w') as f:
+            json.dump(drift, f)
+        
+    click.echo("Scan complete")
 
 if __name__ == '__main__':
     cli()
