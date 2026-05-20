@@ -1,0 +1,15 @@
+{
+  "goal": "Build a Python CLI tool named DocGuard CLI. Detect documentation drift by comparing code comments and documentation files against code structure.",
+  "acceptance_criteria": [
+    "Scan specified directory recursively.",
+    "Parse code comments and markdown documentation files.",
+    "Identify potential drift (e.g., undocumented functions, outdated references).",
+    "Output a formatted rich terminal table with findings.",
+    "Support dry-run mode.",
+    "Export findings to JSON."
+  ],
+  "meeting_budget": 5,
+  "meetings_held": 2,
+  "status": "active",
+  "notes": "Redesigned implementation and tests from scratch. Previous approach failed due to truncated paths and incomplete implementation."
+}
