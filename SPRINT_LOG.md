@@ -11,3 +11,7 @@ Reviewing DocGuard-CLI codebase and test results. Verifying all 6 acceptance cri
 ## Turn 1 — Manager (2026-05-20 15:45 UTC)
 
 
+
+## Turn 2 — Craft (2026-05-20 15:47 UTC)
+
+Corrected CLI command to use positional PATH argument instead of --target, as indicated by the Usage message. Ran the CLI in dry-run mode with JSON export, and executed the final acceptance test suite.
